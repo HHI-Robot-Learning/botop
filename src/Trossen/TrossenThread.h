@@ -9,6 +9,8 @@ struct TrossenThread : rai::RobotAbstraction, rai::Thread {
   std::shared_ptr<trossen_arm::TrossenArmDriver> driver;
   str ipAddress;
   arr Kp, Kd;
+  arr tauSlow;   // slow-moving baseline of external efforts, for contact detection
+  uint touchCount=0;   // consecutive ticks above the contact threshold
   double ctrlTime=0.;
 
   ofstream fil;

@@ -74,6 +74,19 @@ void TrossenThread::open(){
   driver->set_motor_parameters(motor_parameters);
 #else
   driver->set_motor_parameters(trossen_arm::StandardMotorParameters::wxai_v0_latest);
+
+    // Experiment: the stock position loop has kd = 0, which rings at low speed.
+    {
+      double kd = rai::getParameter<double>("Trossen/motorKd", 0.);
+      if(kd>0.){
+        auto mp = driver->get_motor_parameters();
+        for(auto& joint : mp){
+          joint.at(trossen_arm::Mode::position).position.kd = kd;
+        }
+        driver->set_motor_parameters(mp);
+        LOG(0) <<"Trossen: position-loop kd set to " <<kd;
+      }
+    }
 #endif
 
   //get initial state
@@ -102,80 +115,135 @@ void TrossenThread::open(){
 }
 
 void TrossenThread::close(){
-  driver->set_all_modes(trossen_arm::Mode::idle);
-  rai::wait(.1);
+  if(!driver) return;
+  try{
+    driver->set_all_modes(trossen_arm::Mode::idle);
+    rai::wait(.1);
+  }catch(const std::exception& e){
+    LOG(-1) <<"Trossen: could not set idle on close: " <<e.what();
+  }
   driver.reset();
 }
 
 void TrossenThread::step(){
-  //-- get real state
-  arr q_real = as_arr(driver->get_all_positions(), false);
-  arr qDot_real = as_arr(driver->get_all_velocities(), false);
-  arr tauExternal = as_arr(driver->get_all_external_efforts(), false);
+  try{
 
-  flipTrossenSigns(q_real);
-  flipTrossenSigns(qDot_real);
-  flipTrossenSigns(tauExternal);
+    //-- get real state
+    arr q_real = as_arr(driver->get_all_positions(), false);
+    arr qDot_real = as_arr(driver->get_all_velocities(), false);
+    arr tauExternal = as_arr(driver->get_all_external_efforts(), false);
 
-  //-- publish state & INCREMENT CTRL TIME
-  {
-    auto stateSet = state.set();
-    if(!stateSet->stall) stateSet->ctrlTime += metronome.ticInterval;
-    else stateSet->stall--;
-    ctrlTime = stateSet->ctrlTime;
-    stateSet->q = q_real;
-    stateSet->qDot = qDot_real;
-    stateSet->tauExternalIntegral += tauExternal;
-    stateSet->tauExternalCount++;
-  }
+    flipTrossenSigns(q_real);
+    flipTrossenSigns(qDot_real);
+    flipTrossenSigns(tauExternal);
 
-  //-- get current ctrl reference
-  arr q_ref, qDot_ref, qDDot_ref;
-  {
-    auto cmdGet = cmd.get();
-
-    //get commanded reference from the reference callback (e.g., sampling a spline reference)
-    if(cmdGet->ref){
-      cmdGet->ref->getReference(q_ref, qDot_ref, qDDot_ref, q_real, qDot_real, ctrlTime);
-    }else{
-      q_ref = q_real;
+    //-- publish state & INCREMENT CTRL TIME
+    {
+      auto stateSet = state.set();
+      if(!stateSet->stall) stateSet->ctrlTime += metronome.ticInterval;
+      else stateSet->stall--;
+      ctrlTime = stateSet->ctrlTime;
+      stateSet->q = q_real;
+      stateSet->qDot = qDot_real;
+      stateSet->tauExternalIntegral += tauExternal;
+      stateSet->tauExternalCount++;
     }
-  }
 
-  //write into log file, need to be made optional
-  fil <<ctrlTime <<' ' <<q_ref.modRaw() <<' ' <<q_real.modRaw() <<endl;
+    // Contact detection by high-passing the external efforts: inertia and gravity vary
+    // over seconds, contact arrives in milliseconds. tauSlow tracks the slow part, and
+    // what is left over is the contact. Measured 2026-09-14: at moveTo speeds the raw
+    // |tau| baseline is ~1.0 while moving, which is why a plain threshold on |tau| was
+    // firing for most of the trajectory.
+    {
+      if(tauSlow.N != tauExternal.N){ tauSlow = tauExternal; }
+      double tc = rai::getParameter<double>("Trossen/tauBaselineTime", .5);
+      double alpha = metronome.ticInterval / tc;
+      tauSlow += alpha * (tauExternal - tauSlow);
 
-  //-- check reference error
-  bool isStalled = false;
-  if(q_ref.N){
-    double err = length(q_ref - q_real);
-    if(err>.05){ //stall!
-      state.set()->stall = 2; //no progress in reference time! for at least 2 iterations (to ensure continuous stall with multiple threads)
-      isStalled=true;
-      cout <<"STALLING - err: " <<err <<endl;
+      double dev = 0.;
+      for(uint i=0;i<6 && i<tauExternal.N;i++){
+        double e = tauExternal(i) - tauSlow(i);
+        dev += e*e;
+      }
+      dev = sqrt(dev);
+
+      (void)dev;   // kept for the log only; contact is now detected by tracking error
     }
-  }
+
+    //-- get current ctrl reference
+    arr q_ref, qDot_ref, qDDot_ref;
+    {
+      auto cmdGet = cmd.get();
+
+      //get commanded reference from the reference callback (e.g., sampling a spline reference)
+      if(cmdGet->ref){
+        cmdGet->ref->getReference(q_ref, qDot_ref, qDDot_ref, q_real, qDot_real, ctrlTime);
+      }else{
+        q_ref = q_real;
+      }
+    }
+
+    //write into log file, need to be made optional
+    fil <<ctrlTime <<' ' <<q_ref.modRaw() <<' ' <<q_real.modRaw() <<' ' <<tauExternal.modRaw() <<' ' <<tauSlow.modRaw() <<endl;
+
+    //-- check reference error
+    bool isStalled = false;
+    if(q_ref.N){
+      double err = length(q_ref - q_real);
+      double stallThreshold = rai::getParameter<double>("Trossen/stallThreshold", .05);
+      if(err>stallThreshold){ //stall!
+        state.set()->stall = 2;
+        isStalled=true;
+        cout <<"STALLING - err: " <<err <<endl;
+      }
+
+      // Contact detection by tracking error. When something holds the arm back, q_real
+      // falls behind q_ref and STAYS behind, because the spline reference keeps
+      // advancing. Measured 2026-09-14: free motion ~0.018, hand contact ~0.045.
+      // Unlike the high-passed external efforts, this does not adapt to a sustained
+      // push — that was why the tau-based detector lost contact after ~0.15 s.
+      double touchErr = rai::getParameter<double>("Trossen/touchErr", 0.);
+      uint touchTicks = rai::getParameter<double>("Trossen/touchTicks", 20);
+      bool baselineReady = (ctrlTime > 1.5);
+      if(touchErr>0. && baselineReady && err>touchErr) touchCount++;
+      else touchCount = 0;
+
+      if(touchErr>0. && touchCount==touchTicks){
+        LOG(0) <<"CONTACT: tracking error " <<err <<" for " <<touchTicks <<" ticks";
+        state.set()->contact = true;
+      }
+    }
 
 #if 0 //own PD
-  arr u;
-  u.resize(q_real.N).setZero();
-  if(q_ref.N){
-    u += Kp % (q_ref - q_real);
-    u += Kd % (qDot_ref - qDot_real);
-  }
-
-  driver->set_all_external_efforts(as_vector(u), 0.0f, false);
-#else
-  if(q_ref.N){
-    if(!isStalled){
-      arr q_cmd = q_ref;
-      flipTrossenSigns(q_cmd);
-      arr qDot_cmd = qDot_ref;
-      flipTrossenSigns(qDot_cmd);
-      driver->set_all_positions(as_vector(q_cmd), 0.0f, false, as_vector(qDot_cmd));
+    arr u;
+    u.resize(q_real.N).setZero();
+    if(q_ref.N){
+      u += Kp % (q_ref - q_real);
+      u += Kd % (qDot_ref - qDot_real);
     }
-  }
+
+    driver->set_all_external_efforts(as_vector(u), 0.0f, false);
+#else
+    if(q_ref.N){
+      if(!isStalled){
+        arr q_cmd = q_ref;
+        flipTrossenSigns(q_cmd);
+        arr qDot_cmd = qDot_ref;
+        flipTrossenSigns(qDot_cmd);
+        driver->set_all_positions(as_vector(q_cmd), 0.004f, false);
+      }
+    }
 #endif
+
+  }catch(const std::exception& e){
+    // The driver's daemon stores an exception and rethrows it on the next call, so a
+    // network drop surfaces here. step() runs inside a thread, and an exception leaving
+    // a thread is std::terminate() — which is why every driver error so far killed the
+    // process before close() could run, leaving the controller refusing TCP until it
+    // was power-cycled. Stop the thread cleanly instead.
+    LOG(-1) <<"Trossen driver error in step(): " <<e.what() <<" -- stopping thread";
+    threadStop();
+  }
 }
 
 #else

@@ -91,23 +91,79 @@ void botop(){
     bot.getState(q_now, qDot_now, t_now);
     cout <<"starting from: " <<q_now <<endl;
 
-    uint T=5;
+    uint T=15;
     arr path(T, q_now.N);
-    for(uint t=0;t<T;t++){ path[t] = q_now; path(t,{0,5}) += 0.02*randn(5); } // play with number before *randn(5), tested: 0.02, with 0.1 and more crush!!!
+    for(uint t=0;t<T;t++){ path[t] = q_now; path(t,{0,5}) += 0.1*randn(5); }
     path[-1] = q_now;
-    bot.move(path, {2.0});
+    bot.move(path, {8.0});
     bot.wait(C);
   }
 
   // gnuplot("plot 'trossen.dat' us 1:4 t 'REF', '' us 1:11 t 'REAL'", true);
 }
 
+void moveToTarget(){
+  rai::Configuration C;
+  C.addFile("scene.yml");
+
+  {
+    BotOp bot(C, false);
+    bot.launch_trossen();
+    bot.wait(C, true, false);
+
+    arr q_now, qDot_now; double t_now;
+    bot.getState(q_now, qDot_now, t_now);
+    cout <<"starting from: " <<q_now <<endl;
+
+    arr q_target = q_now;
+    q_target(0) = 1.5;
+    q_target(1) = 0.5;
+    q_target(2) = -0.6;
+    q_target(3) = 0.4;
+
+    // works well
+    /*arr q_target = q_now;
+    q_target(0) += 0.3;     // base
+    q_target(1) += 0.6;     // shoulder
+    cout <<"target:        " <<q_target <<endl;*/
+
+    // suspended, but only commented (for future debugs? idk)
+    /* arr path(2, q_now.N);
+    path[0] = q_now;
+    path[1] = q_target;
+    bot.move(path, {4.0});
+    bot.wait(C); */
+
+    bot.moveTo(q_target, 2.);
+
+    // wait until either the move finishes or something touches the arm
+    while(bot.getTimeToEnd()>0. && !bot.state.get()->contact){
+      bot.sync(C, .01);
+    }
+    if(bot.state.get()->contact){
+      cout <<"contact — stopping gently" <<endl;
+      arr q_stop, qDot_stop; double t_stop;
+      bot.getState(q_stop, qDot_stop, t_stop);
+      bot.moveTo(q_stop, 3., true);   // overwrite=true: blend from current velocity
+      bot.wait(C);
+      rai::wait(1.5);
+      bot.state.set()->contact = false;
+    }
+
+    bot.moveTo(q_now, 1.);
+    bot.wait(C);
+
+    cout <<"returned to start" <<endl;
+  }
+}
+
 
 int main(int argc, char** argv){
   rai::initCmdLine(argc, argv);
 
-    // direct();
-    // thread();
-    botop();
-    return 0;
+  // direct();        // gravity compensation, arm goes soft, logs to direct.dat
+  // thread();        // position mode, holds pose, reads state
+  // botop();         // random offsets around the current pose
+  moveToTarget();     // drive to a chosen joint configuration
+  return 0;
 }
