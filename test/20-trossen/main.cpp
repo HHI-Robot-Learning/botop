@@ -1,3 +1,4 @@
+#include <fstream>
 #include <Core/util.h>
 #include <Core/thread.h>
 #include <Control/CtrlMsgs.h>
@@ -16,21 +17,36 @@
 
 int direct(){
   // Initialize the driver
-  trossen_arm::TrossenArmDriver driver;
+  // trossen_arm::TrossenArmDriver driver;
+  auto driver = std::make_shared<trossen_arm::TrossenArmDriver>();
 
   // Configure the driver
-  driver.configure(
+  driver->configure(
       trossen_arm::Model::wxai_v0,
-      trossen_arm::StandardEndEffector::wxai_v0_leader,
-      "192.168.1.3",
+      trossen_arm::StandardEndEffector::wxai_v0_follower, //changed for our arm till table arrived
+      "192.168.1.5", // follower left (.3 was for leader left)
       true
       );
 
   // Start gravity compensation
-  driver.set_all_modes(trossen_arm::Mode::external_effort);
-  driver.set_all_external_efforts({0, 0, 0, 0, 0, 0, 0}, 0.0f, false);
+  driver->set_all_modes(trossen_arm::Mode::external_effort);
+  driver->set_all_external_efforts({0, 0, 0, 0, 0, 0, 0}, 0.0f, false);
 
-  rai::wait();
+  std::ofstream fil("direct.dat");
+  double t=0.;
+  for(uint k=0; k<2500; k++){        // 30 s at 500 Hz   // for friday tests switched from k<15000 to k<2500 (5s)
+    auto q = driver->get_all_positions();
+    fil <<t;
+    for(auto v:q) fil <<' ' <<v;
+    fil <<std::endl;
+    if(!(k%250)) { cout <<"t=" <<t <<"  q:"; for(auto v:q) cout <<' ' <<v; cout <<endl; }
+    t += .002;
+    rai::wait(.002);
+  }
+  
+  driver->set_all_modes(trossen_arm::Mode::idle);
+  rai::wait(.5);
+  driver.reset();
 
   return 0;
 }
@@ -62,28 +78,28 @@ void botop(){
   C.addFile("scene.yml");
   arr q0 = C.getJointState();
 
-  q0 = {0.124552, 0.630388, 0.830282, -0.140574, -0.621233, 0.422866, 0.02};
+  // Marc's hardcoded pose is for HIS arm — leaving it in would command ours to fly
+  // there from wherever it stands:
+  // q0 = {0.124552, 0.630388, 0.830282, -0.140574, -0.621233, 0.422866, 0.02};
 
   {
-
     BotOp bot(C, false);
-
     bot.launch_trossen();
-
     bot.wait(C, true, false);
 
-    uint T=10;
-    arr path(T, q0.N);
-    for(uint t=0;t<T;t++){
-      path[t] = q0;
-      path(t,{0,6}) += 0.3*randn(6);
-    }
-    path[-1] = q0;
-    bot.move(path, {.5*T});
+    arr q_now, qDot_now; double t_now;
+    bot.getState(q_now, qDot_now, t_now);
+    cout <<"starting from: " <<q_now <<endl;
+
+    uint T=5;
+    arr path(T, q_now.N);
+    for(uint t=0;t<T;t++){ path[t] = q_now; path(t,{0,5}) += 0.02*randn(5); } // play with number before *randn(5), tested: 0.02, with 0.1 and more crush!!!
+    path[-1] = q_now;
+    bot.move(path, {2.0});
     bot.wait(C);
   }
 
-  gnuplot("plot 'trossen.dat' us 1:4 t 'REF', '' us 1:11 t 'REAL'", true);
+  // gnuplot("plot 'trossen.dat' us 1:4 t 'REF', '' us 1:11 t 'REAL'", true);
 }
 
 

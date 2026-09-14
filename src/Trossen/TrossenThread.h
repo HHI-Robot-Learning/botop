@@ -13,7 +13,7 @@ struct TrossenThread : rai::RobotAbstraction, rai::Thread {
 
   ofstream fil;
 
-  TrossenThread(rai::Var<rai::CtrlCmdMsg>& cmd, rai::Var<rai::CtrlStateMsg>& state, const char* ipAddress="192.168.1.3");
+  TrossenThread(rai::Var<rai::CtrlCmdMsg>& cmd, rai::Var<rai::CtrlStateMsg>& state, const char* ipAddress="192.168.1.5");
   ~TrossenThread(){
     LOG(0) <<"shutting down Trossen -- " <<timer.report();
     threadClose();

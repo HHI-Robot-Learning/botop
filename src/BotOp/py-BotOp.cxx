@@ -34,10 +34,11 @@ void init_BotOp(pybind11::module& m) {
 
   pybind11::class_<BotOp, shared_ptr<BotOp>>(m, "BotOp", "Robot Operation interface -- see https://marctoussaint.github.io/robotics-course/tutorials/1b-botop.html")
 
-  .def(pybind11::init<rai::Configuration&, bool>(),
+  .def(pybind11::init<rai::Configuration&, bool, bool>(),
        "constructor",
        pybind11::arg("C"),
-       pybind11::arg("useRealRobot")
+       pybind11::arg("useRealRobot"),
+       pybind11::arg("auto_launch_config") = true
        )
 
   .def("get_t", &BotOp::get_t,

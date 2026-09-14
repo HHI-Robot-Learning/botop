@@ -1,5 +1,14 @@
 #include "TrossenThread.h"
 
+// The model's URDF was converted with joints 2/3/4 axis-flipped (PhysX cannot build a
+// generic hinge from a negative axis), so the driver and the model disagree in sign on
+// exactly those three. Convert on both boundaries so everything above TrossenThread —
+// BotOp, sync(), the viewer, KOMO — works in model convention.
+// TODO hardcoded indices; should come from the URDF (see wxai.prepare_model).
+static void flipTrossenSigns(arr& q){
+  if(q.N>4){ q(2)*=-1.; q(3)*=-1.; q(4)*=-1.; }
+}
+
 #ifdef RAI_TROSSEN
 
 //COPY AND PASTE from trossen_arm/demos/cpp/gravity_compensation
@@ -16,8 +25,9 @@ TrossenThread::TrossenThread(rai::Var<rai::CtrlCmdMsg>& cmd, rai::Var<rai::CtrlS
 
   LOG(0) <<"launching Trossen at " <<ipAddress;
 
-  threadOpen(true);
-  threadLoop();
+  threadLoop(true);   // wait until open() has read q_init from hardware, otherwise
+                      // step() runs with BotOp's qHome (the model pose) for a few
+                      // ticks and commands the arm there
 }
 
 void print_motor_parameters(const std::vector<std::map<trossen_arm::Mode, trossen_arm::MotorParameter>>& motor_parameters)
@@ -48,7 +58,7 @@ void TrossenThread::open(){
 
   driver->configure(
       trossen_arm::Model::wxai_v0,
-      trossen_arm::StandardEndEffector::wxai_v0_leader,
+      trossen_arm::StandardEndEffector::wxai_v0_follower,
       ipAddress.p,
       true
       );
@@ -68,6 +78,7 @@ void TrossenThread::open(){
 
   //get initial state
   arr q_init = as_arr(driver->get_all_positions(), false);
+  flipTrossenSigns(q_init);
   {
     auto stateSet = state.set();
     stateSet->q = q_init;
@@ -101,6 +112,10 @@ void TrossenThread::step(){
   arr q_real = as_arr(driver->get_all_positions(), false);
   arr qDot_real = as_arr(driver->get_all_velocities(), false);
   arr tauExternal = as_arr(driver->get_all_external_efforts(), false);
+
+  flipTrossenSigns(q_real);
+  flipTrossenSigns(qDot_real);
+  flipTrossenSigns(tauExternal);
 
   //-- publish state & INCREMENT CTRL TIME
   {
@@ -153,7 +168,11 @@ void TrossenThread::step(){
 #else
   if(q_ref.N){
     if(!isStalled){
-      driver->set_all_positions(as_vector(q_ref), 0.0f, false, as_vector(qDot_ref));
+      arr q_cmd = q_ref;
+      flipTrossenSigns(q_cmd);
+      arr qDot_cmd = qDot_ref;
+      flipTrossenSigns(qDot_cmd);
+      driver->set_all_positions(as_vector(q_cmd), 0.0f, false, as_vector(qDot_cmd));
     }
   }
 #endif

@@ -1,3 +1,2 @@
-Include: <../../../../26-robot-models/models/vx300s.g>
-
-Edit(gripper): { joint: none }
+Include: <../../../../26-robot-models/models/wxai_arm.g>
+Edit right_carriage_joint: { joint: none }
