@@ -152,7 +152,11 @@ void moveToTarget(){
       bot.state.set()->contact = false;
     }
 
-    bot.moveTo(q_now, 1.);
+    arr q_home = {-0.04, 0.05, -0.3, 0.02, 0., -0.05, 0.0002};   // near-zero rest pose
+    bot.moveTo(q_home, 0.5);
+    bot.wait(C);
+    cout <<"returned home" <<endl;
+
     bot.wait(C);
 
     cout <<"returned to start" <<endl;
