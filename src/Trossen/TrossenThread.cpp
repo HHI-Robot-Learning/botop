@@ -230,7 +230,7 @@ void TrossenThread::step(){
         flipTrossenSigns(q_cmd);
         arr qDot_cmd = qDot_ref;
         flipTrossenSigns(qDot_cmd);
-        driver->set_all_positions(as_vector(q_cmd), 0.004f, false);
+        driver->set_all_positions(as_vector(q_cmd), 0.0f, false, as_vector(qDot_cmd));
       }
     }
 #endif

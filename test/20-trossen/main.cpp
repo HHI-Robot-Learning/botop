@@ -78,28 +78,29 @@ void botop(){
   C.addFile("scene.yml");
   arr q0 = C.getJointState();
 
-  // Marc's hardcoded pose is for HIS arm — leaving it in would command ours to fly
-  // there from wherever it stands:
-  // q0 = {0.124552, 0.630388, 0.830282, -0.140574, -0.621233, 0.422866, 0.02};
-
   {
     BotOp bot(C, false);
     bot.launch_trossen();
     bot.wait(C, true, false);
 
-    arr q_now, qDot_now; double t_now;
-    bot.getState(q_now, qDot_now, t_now);
-    cout <<"starting from: " <<q_now <<endl;
+    // Marc's hardcoded start pose, with joints 2/3/4 negated into our model's
+    // convention. All seven values land inside the joint limits this way, which is
+    // itself evidence that his scene used the driver's sign convention.
+    // We commented this line out on Friday to stop the arm flying there from wherever
+    // it stood — but that also started the random walk right at joint_1's lower
+    // limit, which is what made it stall. Drive there first instead.
+    q0 = {0.124552, 0.630388, -0.830282, 0.140574, 0.621233, 0.422866, 0.020000};
+    cout <<"moving to Marc's start pose first" <<endl;
+    bot.moveTo(q0, 1.);
+    bot.wait(C);
 
-    uint T=15;
-    arr path(T, q_now.N);
-    for(uint t=0;t<T;t++){ path[t] = q_now; path(t,{0,5}) += 0.1*randn(5); }
-    path[-1] = q_now;
-    bot.move(path, {8.0});
+    uint T=10;
+    arr path(T, q0.N);
+    for(uint t=0;t<T;t++){ path[t] = q0; path(t,{0,6}) += 0.3*randn(6); }
+    path[-1] = q0;
+    bot.move(path, {.5*T});
     bot.wait(C);
   }
-
-  // gnuplot("plot 'trossen.dat' us 1:4 t 'REF', '' us 1:11 t 'REAL'", true);
 }
 
 void moveToTarget(){
@@ -120,6 +121,7 @@ void moveToTarget(){
     q_target(1) = 0.5;
     q_target(2) = -0.6;
     q_target(3) = 0.4;
+    q_target(6) = 0.03;   // carriage travel in metres, range 0..0.044
 
     // works well
     /*arr q_target = q_now;
@@ -161,9 +163,15 @@ void moveToTarget(){
 int main(int argc, char** argv){
   rai::initCmdLine(argc, argv);
 
-  // direct();        // gravity compensation, arm goes soft, logs to direct.dat
-  // thread();        // position mode, holds pose, reads state
-  // botop();         // random offsets around the current pose
-  moveToTarget();     // drive to a chosen joint configuration
+  rai::String mode = rai::getParameter<rai::String>("mode", "moveToTarget");
+
+  if(mode=="direct")           direct();        // gravity compensation, arm goes soft, logs direct.dat
+  else if(mode=="thread")      thread();        // position mode, holds pose, reads state
+  else if(mode=="botop")       botop();         // Marc's random offsets around the current pose
+  else if(mode=="moveToTarget") moveToTarget(); // drive to a chosen configuration, stop on contact
+  else{
+    LOG(-1) <<"unknown mode '" <<mode <<"' -- use direct | thread | botop | moveToTarget";
+    return 1;
+  }
   return 0;
 }
