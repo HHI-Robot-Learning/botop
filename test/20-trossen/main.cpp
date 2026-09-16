@@ -34,7 +34,7 @@ int direct(){
 
   std::ofstream fil("direct.dat");
   double t=0.;
-  for(uint k=0; k<2500; k++){        // 30 s at 500 Hz   // for friday tests switched from k<15000 to k<2500 (5s)
+  for(uint k=0; k<30000; k++){    // 60 s
     auto q = driver->get_all_positions();
     fil <<t;
     for(auto v:q) fil <<' ' <<v;
