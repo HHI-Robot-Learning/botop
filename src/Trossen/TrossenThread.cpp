@@ -149,27 +149,6 @@ void TrossenThread::step(){
       stateSet->tauExternalCount++;
     }
 
-    // Contact detection by high-passing the external efforts: inertia and gravity vary
-    // over seconds, contact arrives in milliseconds. tauSlow tracks the slow part, and
-    // what is left over is the contact. Measured 2026-09-14: at moveTo speeds the raw
-    // |tau| baseline is ~1.0 while moving, which is why a plain threshold on |tau| was
-    // firing for most of the trajectory.
-    {
-      if(tauSlow.N != tauExternal.N){ tauSlow = tauExternal; }
-      double tc = rai::getParameter<double>("Trossen/tauBaselineTime", .5);
-      double alpha = metronome.ticInterval / tc;
-      tauSlow += alpha * (tauExternal - tauSlow);
-
-      double dev = 0.;
-      for(uint i=0;i<6 && i<tauExternal.N;i++){
-        double e = tauExternal(i) - tauSlow(i);
-        dev += e*e;
-      }
-      dev = sqrt(dev);
-
-      (void)dev;   // kept for the log only; contact is now detected by tracking error
-    }
-
     //-- get current ctrl reference
     arr q_ref, qDot_ref, qDDot_ref;
     {
@@ -184,8 +163,7 @@ void TrossenThread::step(){
     }
 
     //write into log file, need to be made optional
-    fil <<ctrlTime <<' ' <<q_ref.modRaw() <<' ' <<q_real.modRaw() <<' ' <<tauExternal.modRaw() <<' ' <<tauSlow.modRaw() <<endl;
-
+    fil <<ctrlTime <<' ' <<q_ref.modRaw() <<' ' <<q_real.modRaw() <<' ' <<tauExternal.modRaw() <<endl;
     //-- check reference error
     bool isStalled = false;
     if(q_ref.N){
@@ -195,22 +173,6 @@ void TrossenThread::step(){
         state.set()->stall = 2;
         isStalled=true;
         cout <<"STALLING - err: " <<err <<endl;
-      }
-
-      // Contact detection by tracking error. When something holds the arm back, q_real
-      // falls behind q_ref and STAYS behind, because the spline reference keeps
-      // advancing. Measured 2026-09-14: free motion ~0.018, hand contact ~0.045.
-      // Unlike the high-passed external efforts, this does not adapt to a sustained
-      // push — that was why the tau-based detector lost contact after ~0.15 s.
-      double touchErr = rai::getParameter<double>("Trossen/touchErr", 0.);
-      uint touchTicks = rai::getParameter<double>("Trossen/touchTicks", 20);
-      bool baselineReady = (ctrlTime > 1.5);
-      if(touchErr>0. && baselineReady && err>touchErr) touchCount++;
-      else touchCount = 0;
-
-      if(touchErr>0. && touchCount==touchTicks){
-        LOG(0) <<"CONTACT: tracking error " <<err <<" for " <<touchTicks <<" ticks";
-        state.set()->contact = true;
       }
     }
 
