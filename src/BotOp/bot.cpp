@@ -267,7 +267,14 @@ void BotOp::launch_allegro(const char* id, rai::Frame* f){
 }
 
 void BotOp::launch_trossen(const strA& ids, const FrameL& F){
-  trossen = make_shared<TrossenThread>(cmd, state, ids);
+  //end effector per arm from the frame attribute 'trossen_ee' (default: follower), like the IP from 'trossen'
+  strA ees(ids.N);
+  for(uint i=0;i<ids.N;i++){
+    ees(i) = "follower";
+    str tmp;
+    if(i<F.N && F(i)->ats && F(i)->ats->get<str>(tmp, "trossen_ee")) ees(i) = tmp;
+  }
+  trossen = make_shared<TrossenThread>(cmd, state, ids, ees);
 }
 
 void BotOp::launch_optitrack(rai::Configuration& C){

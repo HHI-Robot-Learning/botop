@@ -6,10 +6,11 @@
 
 #include "libtrossen_arm/trossen_arm.hpp"
 
-TrossenThread::TrossenThread(rai::Var<rai::CtrlCmdMsg>& cmd, rai::Var<rai::CtrlStateMsg>& state, const strA& ids)
+TrossenThread::TrossenThread(rai::Var<rai::CtrlCmdMsg>& cmd, rai::Var<rai::CtrlStateMsg>& state, const strA& ids, const strA& ees)
     : rai::RobotAbstraction(cmd, state),
     Thread("TrossenThread", .002), //HARD CODED step frequency of 100Hz
-    ipAddresses(ids) {
+    ipAddresses(ids),
+    endEffectors(ees) {
 
   Kp = rai::getParameter<arr>("Trossen/Kp", arr{});
   Kd = rai::getParameter<arr>("Trossen/Kd", arr{}); //FOR TROSSEN, this corresponds to the Kp of the velocity PID
@@ -47,9 +48,13 @@ void TrossenThread::open(){
 
   CHECK_EQ(ipAddresses.N, 1, "only 1 trossen for now");
 
+  auto ee = trossen_arm::StandardEndEffector::wxai_v0_follower;
+  if(endEffectors.N && endEffectors(0)=="leader") ee = trossen_arm::StandardEndEffector::wxai_v0_leader;
+  LOG(0) <<"Trossen " <<ipAddresses(0) <<" end effector: " <<(endEffectors.N ? endEffectors(0) : str("follower"));
+
   driver->configure(
       trossen_arm::Model::wxai_v0,
-      trossen_arm::StandardEndEffector::wxai_v0_follower,
+      ee,
       ipAddresses(0).p,
       true
       );
@@ -187,10 +192,11 @@ void TrossenThread::step(){
 
 #else
 
-TrossenThread::TrossenThread(rai::Var<rai::CtrlCmdMsg>& cmd, rai::Var<rai::CtrlStateMsg>& state, const strA& ids)
+TrossenThread::TrossenThread(rai::Var<rai::CtrlCmdMsg>& cmd, rai::Var<rai::CtrlStateMsg>& state, const strA& ids, const strA& ees)
     : rai::RobotAbstraction(cmd, state),
     Thread("TrossenThread", .002), //HARD CODED step frequency of 100Hz
-    ipAddresses(ids) { NICO }
+    ipAddresses(ids),
+    endEffectors(ees) { NICO }
 void TrossenThread::open(){ NICO }
 void TrossenThread::step(){ NICO }
 void TrossenThread::close(){ NICO }
