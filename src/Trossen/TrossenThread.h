@@ -11,6 +11,8 @@ struct TrossenThread : rai::RobotAbstraction, rai::Thread {
   strA endEffectors;
   arr Kp, Kd;
   double ctrlTime=0.;
+  double stallThreshold=.05; //rai.cfg: Trossen/stallThreshold (default .05)
+  bool failed=false;         //set when the driver threw; the thread then stops talking to this arm
   enum { torque_mode, position_mode } mode;
 
   ofstream dataFile;
@@ -23,5 +25,6 @@ struct TrossenThread : rai::RobotAbstraction, rai::Thread {
 
   void open();
   void step();
+  void step_inner();
   void close();
 };

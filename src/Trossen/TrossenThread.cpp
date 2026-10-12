@@ -14,8 +14,9 @@ TrossenThread::TrossenThread(rai::Var<rai::CtrlCmdMsg>& cmd, rai::Var<rai::CtrlS
 
   Kp = rai::getParameter<arr>("Trossen/Kp", arr{});
   Kd = rai::getParameter<arr>("Trossen/Kd", arr{}); //FOR TROSSEN, this corresponds to the Kp of the velocity PID
+  stallThreshold = rai::getParameter<double>("Trossen/stallThreshold", .05);
 
-  LOG(0) <<"launching Trossen at " <<ipAddresses;
+  LOG(0) <<"launching Trossen at " <<ipAddresses <<" (stallThreshold " <<stallThreshold <<")";
 
   threadOpen(true);
   threadLoop();
@@ -107,13 +108,44 @@ void TrossenThread::open(){
 }
 
 void TrossenThread::close(){
-  driver->set_all_modes(trossen_arm::Mode::idle);
+  //driver errors here must not escape: an uncaught exception terminates the whole process,
+  //including every other robot thread in it
+  if(!driver) return;
+  try{
+    driver->set_all_modes(trossen_arm::Mode::idle);
+  }catch(const std::exception& e){
+    LOG(-1) <<"Trossen " <<ipAddresses(0) <<" error on close (set idle): " <<e.what();
+  }catch(...){
+    LOG(-1) <<"Trossen " <<ipAddresses(0) <<" unknown error on close (set idle)";
+  }
   rai::wait(.1);
-  driver->cleanup(false);
+  try{
+    driver->cleanup(false);
+  }catch(const std::exception& e){
+    LOG(-1) <<"Trossen " <<ipAddresses(0) <<" error on close (cleanup): " <<e.what();
+  }catch(...){
+    LOG(-1) <<"Trossen " <<ipAddresses(0) <<" unknown error on close (cleanup)";
+  }
   driver.reset();
 }
 
 void TrossenThread::step(){
+  //a driver error (e.g. the controller faulting into idle on a joint/velocity limit) used to escape
+  //this thread and std::terminate the whole process -- every other arm and the caller's cleanup included.
+  //Now: log it once and stop talking to this arm; the rest of the process keeps running.
+  if(failed) return;
+  try{
+    step_inner();
+  }catch(const std::exception& e){
+    LOG(-1) <<"Trossen " <<ipAddresses(0) <<" driver error, stopping this arm's thread: " <<e.what();
+    failed=true;
+  }catch(...){
+    LOG(-1) <<"Trossen " <<ipAddresses(0) <<" unknown driver error, stopping this arm's thread";
+    failed=true;
+  }
+}
+
+void TrossenThread::step_inner(){
   //-- get real state
   arr q_real = as_arr(driver->get_all_positions(), false);
   arr qDot_real = as_arr(driver->get_all_velocities(), false);
@@ -148,7 +180,7 @@ void TrossenThread::step(){
   bool isStalled = false;
   if(q_ref.N){
     double err = length(q_ref - q_real);
-    if(err>.05){ //stall!
+    if(err>stallThreshold){ //stall!
       state.set()->stall = 2; //no progress in reference time! for at least 2 iterations (to ensure continuous stall with multiple threads)
       isStalled=true;
       cout <<"STALLING - err: " <<err <<' ' <<q_ref - q_real <<endl;
@@ -199,6 +231,7 @@ TrossenThread::TrossenThread(rai::Var<rai::CtrlCmdMsg>& cmd, rai::Var<rai::CtrlS
     endEffectors(ees) { NICO }
 void TrossenThread::open(){ NICO }
 void TrossenThread::step(){ NICO }
+void TrossenThread::step_inner(){ NICO }
 void TrossenThread::close(){ NICO }
 
 #endif
